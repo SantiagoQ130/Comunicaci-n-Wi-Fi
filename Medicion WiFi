@@ -1,0 +1,87 @@
+from machine import Pin, I2C
+from ssd1306 import SSD1306_I2C
+import network, time, math
+
+# Hardware setup
+i2c = I2C(1, scl=Pin(15), sda=Pin(14))
+oled = SSD1306_I2C(128, 64, i2c)
+button = Pin(18, Pin.IN, Pin.PULL_UP)
+
+# LEDs setup
+led_measuring = Pin(17, Pin.OUT)
+led_wifi = Pin(19, Pin.OUT)
+led_ready = Pin(16, Pin.OUT)
+
+# WiFi config
+WIFI_NETWORK = "Nombre del Hotspot"
+WIFI_PASS = "clave"
+
+def connect_wifi():
+    wifi = network.WLAN(network.STA_IF)
+    wifi.active(True)
+    wifi.connect(WIFI_NETWORK, WIFI_PASS)
+    
+    for _ in range(10):
+        if wifi.isconnected():
+            show_text("WiFi Connected", wifi.ifconfig()[0])
+            led_wifi.on()
+            return wifi
+        time.sleep(1)
+    
+    show_text("WiFi Failed")
+    led_wifi.off()
+    return None
+
+def show_text(*lines):
+    oled.fill(0)
+    for i, line in enumerate(lines[:4]):
+        oled.text(str(line), 0, 10 + i*15)
+    oled.show()
+
+def get_distance(rssi):
+    tx_power = 20  # Transmitter power
+    freq = 2400    # MHz
+    return 10**((tx_power - rssi - 20*math.log10(freq) + 27.55)/20)
+
+def show_signal(rssi, dist):
+    oled.fill(0)
+    oled.text(f"Signal: {rssi} dBm", 0, 10)
+    oled.text(f"Distance: {dist:.1f}m", 0, 25)
+    
+    # Simple signal bars
+    bars = min(max((rssi + 100)//20, 1), 5)
+    for i in range(5):
+        oled.fill_rect(90 + i*8, 60 - (i+1)*4, 5, (i+1)*4, i < bars)
+    oled.show()
+
+def measure_signal(wifi):
+    with open("signal_log.txt", "w") as f:
+        f.write("RSSI, Distance\n")
+        
+        for _ in range(200):  # Take 200 samples
+            if wifi.isconnected():
+                rssi = wifi.status('rssi')
+                dist = get_distance(rssi)
+                show_signal(rssi, dist)
+                f.write(f"{rssi}, {dist:.2f}\n")
+            else:
+                led_wifi.toggle()
+            time.sleep(0.1)  # 100ms between samples
+
+# Main program
+wifi = connect_wifi()
+led_ready.on()
+show_text("Press button", "to measure")
+
+while True:
+    if button.value() == 0:  # Button pressed
+        led_ready.off()
+        led_measuring.on()
+        
+        show_text("Measuring...")
+        measure_signal(wifi)
+        
+        led_measuring.off()
+        led_ready.on()
+        show_text("Done!", "Move and", "press again")
+        time.sleep(1)
